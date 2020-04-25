@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import os
 from copulas.multivariate import GaussianMultivariate
+#from copulae import GaussianCopula
 import cvxpy as cp
 import cplex as cx
 import time
@@ -20,11 +21,13 @@ from sklearn import ensemble
 import joblib as joblib
 import properscoring as ps
 from tqdm import tqdm
+from scipy import stats
 
-#dir0 = r"C:\Users\denva787\Documents\dennis\RISE" # Windows
-#os.chdir(r"C:\Users\denva787\Documents\dennis\RISE") # Windows
-dir0 = "/Users/Dennis/Desktop/Drive/PhD-Thesis/Projects/RISE/" # macOS
-os.chdir('/Users/Dennis/Desktop/Drive/PhD-Thesis/Projects/RISE') # macOS
+dir0 = r"C:\Users\denva787\Documents\dennis\RISE" # Windows
+os.chdir(r"C:\Users\denva787\Documents\dennis\RISE") # Windows
+MULTIVARIATE_RESULTS = r"C:\Users\denva787\Documents\dennis\RISE\Results\multivariate" # Windows
+#dir0 = "/Users/Dennis/Desktop/Drive/PhD-Thesis/Projects/RISE/" # macOS
+#os.chdir('/Users/Dennis/Desktop/Drive/PhD-Thesis/Projects/RISE') # macOS
 
 ################################################################################
 # Function to create a DataFrame of lagged time observations based
@@ -109,12 +112,50 @@ def copula(netLoad, horizon, num_samples, i):
     timeLags = timeLags.set_index(netLoad.index)
     timeLags = timeLags.iloc[:, ::-1]
     timeLags.dropna(axis=0,inplace=True)
-    # Define and fit copula:
+    # Define and fit copula using copulas package (this is actually
+    # not working for me because samples are not U(0,1)):
     copula = GaussianMultivariate(random_seed=i)
     copula.fit(timeLags)
-    # Sample
-    samples = copula.sample(num_samples)
-    return(samples.values)
+    # The following only works for a Gaussian copula
+    res = {}
+    means = np.zeros(copula.covariance.shape[0])
+    size = (num_samples,)
+
+    clean_cov = np.nan_to_num(copula.covariance)
+    samples = np.random.multivariate_normal(means, clean_cov, size=size)
+
+    for i, (column_name, univariate) in enumerate(zip(copula.columns, copula.univariates)):
+        res[column_name] = stats.norm.cdf(samples[:, i])
+    res=pd.DataFrame(data=res)
+    return(res.values)
+
+################################################################################
+# UPDATED function for the copula scenario generator
+# Now, the copula is trained once.
+################################################################################
+
+def copula2(copula, num_samples):
+    '''
+    Arguments:
+    - copula: a fitted copula.
+    - horizon: the forecast horizon (scalar).
+    - num_samples: number of samples to draw from copula.
+    - i: current time step (at the moment not used).
+    Returns:
+    - Numpy array (num_samples x horizon)
+    '''
+    # The following only works for a Gaussian copula
+    res = {}
+    means = np.zeros(copula.covariance.shape[0])
+    size = (num_samples,)
+
+    clean_cov = np.nan_to_num(copula.covariance)
+    samples = np.random.multivariate_normal(means, clean_cov, size=size)
+
+    for i, (column_name, univariate) in enumerate(zip(copula.columns, copula.univariates)):
+        res[column_name] = stats.norm.cdf(samples[:, i])
+    res=pd.DataFrame(data=res)
+    return(res.values)
 
 ################################################################################
 # Function that creates and solves the optimization problem
@@ -231,6 +272,14 @@ def run(days,horizon,SoC,NL,eq,num_samples,quantileLevels,inpEndo,inpExo,tar,lam
     '''
     data = [] # Store all results
     E_opt = [] # Store the optimal energy results
+    # New: fit the copula once (copulas 0.3.0 is slower than 0.2.4)
+    # Create a matrix with time lags in the columns to train the copula.
+    timeLags = series_to_supervised(NL[NL.index.month==4].to_numpy().tolist(), horizon, 0, False)
+    timeLags = timeLags.set_index(NL[NL.index.month==4].index)
+    timeLags = timeLags.iloc[:, ::-1]
+    timeLags.dropna(axis=0,inplace=True)
+    gausscopula = GaussianMultivariate(random_seed=0)
+    gausscopula.fit(timeLags)
     # Load the forecasts in order to speed up the computation. Otherwise, uncomment
     # the code inside the for-loop to produce forecasts on the fly.
     fcs = [np.loadtxt("{}_{}.{}".format("Forecasts/gbrt",h,"txt")) for h in range(1,97,1)]
@@ -244,15 +293,22 @@ def run(days,horizon,SoC,NL,eq,num_samples,quantileLevels,inpEndo,inpExo,tar,lam
         #fc = gbrt_forecast(horizon,inpEndo,inpExo,tar,quantileLevels,i) # gbrt
         fc = np.vstack([fcs[h][i,:] for h in range(horizon)]) # Read fc instead of producing it
         # Prepare copula samples:
-        samples = copula(NL,horizon,num_samples,0)
+        #samples = copula(NL[NL.index.month==3],horizon,num_samples,0)
+        samples = copula2(gausscopula,num_samples)
         # Generate scenarios from the above two:
         scenarios = np.zeros((num_samples,horizon))
         for h in range(horizon):
             scenarios[:,h] = np.interp(samples[:,h], quantileLevels, fc[h,:], np.amin(fc[h,:]), np.amax(fc[h,:]))
-        scenarios = np.transpose(scenarios)
-        scenarios[0,:] = perfectFC[i] # At the zero-th prediction step, net load is observed so insert this.
+        #scenarios = np.transpose(scenarios)
+        #scenarios[0,:] = perfectFC[i] # At the zero-th prediction step, net load is observed so insert this.
         #ELSE DO PERFECT FORECAST
         #scenarios = perfectFC[i:i+horizon] # perfect forecast
+        ################# To assess the scenarios #################
+        # REMEMBER TO UNCOMMENT LINES 253 AND 254!!!!
+        scenarios = np.insert(scenarios, 0, np.transpose(perfectFC[i:i+horizon]), axis=0)
+        np.savetxt(os.path.join(MULTIVARIATE_RESULTS,"B_{}.txt".format(i)), scenarios, delimiter="\t", fmt='%1.3f')
+        ################# To assess the scenarios #################
+        '''
         start_time = time.time()
         res = smpc_run(scenarios, SoC, eq, lambdas[i:i+horizon,:])
         end_time = time.time() - start_time
@@ -265,6 +321,7 @@ def run(days,horizon,SoC,NL,eq,num_samples,quantileLevels,inpEndo,inpExo,tar,lam
         res_df = pd.DataFrame(res, columns=['Pch','Pdis','PfrGrid','PtoGrid','buyPrice','sellPrice','runTime','Energy','netLoad'])
         res_df.index = NL[NL.index.month == 4].index[[i]]
         res_df.to_csv(dir0 + "{}_{}.{}".format("\Results\DF", eq, "txt"), index=True, header=False, sep='\t', mode="a")
+        '''
 
 ################################################################################
 # Function to train 1..K qr forecast models
