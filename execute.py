@@ -36,12 +36,12 @@ warnings.filterwarnings("ignore")
 days = 15
 horizon = 96
 SoC = 0.5
-num_samples = 100#50
+num_samples = 50
 
-dir0 = r"C:\Users\denva787\Documents\dennis\RISE" # Windows
-os.chdir(r"C:\Users\denva787\Documents\dennis\RISE") # Windows
-#dir0 = "/Users/Dennis/Desktop/Drive/PhD-Thesis/Projects/RISE/" # macOS
-#os.chdir('/Users/Dennis/Desktop/Drive/PhD-Thesis/Projects/RISE') # macOS
+#dir0 = r"C:\Users\denva787\Documents\dennis\RISE" # Windows
+#os.chdir(r"C:\Users\denva787\Documents\dennis\RISE") # Windows
+dir0 = "/Users/Dennis/Desktop/Drive/PhD-Thesis/Projects/RISE/" # macOS
+os.chdir('/Users/Dennis/Desktop/Drive/PhD-Thesis/Projects/RISE/') # macOS
 
 # Read the various data sets
 tar = pd.read_csv(
@@ -84,10 +84,10 @@ elPrice = pd.read_csv(
 ).set_index('datetime')
 lambdas = elPrice.loc['2016-04-02 00:00:00':'2016-04-30 23:45:00'].to_numpy() # Select only buy and sell
 
-perfectFC = NL['2019-04-01':'2019-04-30 23:45:00'].to_numpy()
+perfectFC = NL['2019-04-02':'2019-04-30 23:45:00'].to_numpy() # April 2nd to align with forecasts.
 perfectFC = np.reshape(perfectFC, (perfectFC.shape[0],1))
-#NL = NL[NL.index.month==3]
-
+#print(NL[NL.index.month==4].head())
+'''
 # RUNNING STOCHASTIC CASE STUDIES WITH PROBABILISTIC FORECASTS
 if __name__ == '__main__':
     pool = mp.Pool(processes=2)
@@ -96,6 +96,10 @@ if __name__ == '__main__':
     my_res = [pool.apply_async(fn.run, args=(days,horizon,SoC,NL,b,num_samples,taus,inpEndo,inpExo,tar,lambdas,perfectFC)) for b in bo]
     my_res = [p.get() for p in my_res]
     pool.close()
+'''
+# Run just one process during testing
+taus = np.arange(0.1,0.91,0.1)
+fn.run(days,horizon,SoC,NL,True,num_samples,taus,inpEndo,inpExo,tar,lambdas,perfectFC)
 
 '''
 # RUNNING DETERMINISTIC WITH PERFECT FORECASTS
@@ -104,5 +108,5 @@ if __name__ == '__main__':
 
 taus = np.arange(0.1,0.91,0.1)
 fn.run(days,horizon,SoC,NL,False,num_samples,taus,inpEndo,inpExo,tar,lambdas,perfectFC)
-print("--- %s seconds ---" % (time.time() - start_time))
 '''
+print("--- %s seconds ---" % (time.time() - start_time))

@@ -23,12 +23,24 @@ import properscoring as ps
 from tqdm import tqdm
 from scipy import stats
 
-dir0 = r"C:\Users\denva787\Documents\dennis\RISE" # Windows
-os.chdir(r"C:\Users\denva787\Documents\dennis\RISE") # Windows
-MULTIVARIATE_RESULTS = r"C:\Users\denva787\Documents\dennis\RISE\Results\multivariate" # Windows
-#dir0 = "/Users/Dennis/Desktop/Drive/PhD-Thesis/Projects/RISE/" # macOS
-#os.chdir('/Users/Dennis/Desktop/Drive/PhD-Thesis/Projects/RISE') # macOS
+# For rpy2
+import rpy2.robjects as ro
+from rpy2.robjects import pandas2ri
+from rpy2.robjects.conversion import localconverter
+import rpy2.robjects.packages as rpackages
+copula = rpackages.importr('copula') # Load copula library
 
+# DIRECTORIES ON SERVER
+#dir0 = r"C:\Users\denva787\Documents\dennis\RISE" # Windows
+#os.chdir(r"C:\Users\denva787\Documents\dennis\RISE") # Windows
+#MULTIVARIATE_RESULTS = r"C:\Users\denva787\Documents\dennis\RISE\Results\multivariate" # Windows
+#FORECASTS = "/Users/Dennis/Dropbox/BatteryRise/Forecasts/" # macOS
+# DIRECTORIES ON LOCAL MACHINE
+dir0 = "/Users/Dennis/Desktop/Drive/PhD-Thesis/Projects/RISE/" # macOS
+os.chdir('/Users/Dennis/Desktop/Drive/PhD-Thesis/Projects/RISE/') # macOS
+MULTIVARIATE_RESULTS = "/Users/Dennis/Dropbox/BatteryRise/multivariate/" # macOS
+FORECASTS = "/Users/Dennis/Dropbox/BatteryRise/Forecasts/" # macOS
+FORECASTMODELS = "/Users/Dennis/Desktop/ForecastModels/" # Drive/PhD-Thesis/Projects/RISE/
 ################################################################################
 # Function to create a DataFrame of lagged time observations based
 # on an input vector.
@@ -274,16 +286,23 @@ def run(days,horizon,SoC,NL,eq,num_samples,quantileLevels,inpEndo,inpExo,tar,lam
     E_opt = [] # Store the optimal energy results
     # New: fit the copula once (copulas 0.3.0 is slower than 0.2.4)
     # Create a matrix with time lags in the columns to train the copula.
-    timeLags = series_to_supervised(NL[NL.index.month==4].to_numpy().tolist(), horizon, 0, False)
-    timeLags = timeLags.set_index(NL[NL.index.month==4].index)
+    timeLags = series_to_supervised(NL.to_numpy().tolist(), horizon, 0, False) # [NL.index.month==4]
+    timeLags = timeLags.set_index(NL.index) # [NL.index.month==4]
     timeLags = timeLags.iloc[:, ::-1]
     timeLags.dropna(axis=0,inplace=True)
-    gausscopula = GaussianMultivariate(random_seed=0)
-    gausscopula.fit(timeLags)
+    # Using copula.py
+    #gausscopula = GaussianMultivariate(random_seed=0)
+    #gausscopula.fit(timeLags)
+    # Using copula and rpy2
+    # Convert timeLags pd.DF to R DF
+    with localconverter(ro.default_converter + pandas2ri.converter):
+      r_from_pd_df = ro.conversion.py2rpy(timeLags)
+    copula = rpackages.importr('copula') # Load copula library
+    m = copula.pobs(r_from_pd_df) # Pseudo-observations
+    cop_model = copula.empCopula(m) # Fit empirical copula model
     # Load the forecasts in order to speed up the computation. Otherwise, uncomment
     # the code inside the for-loop to produce forecasts on the fly.
-    fcs = [np.loadtxt("{}_{}.{}".format("Forecasts/gbrt",h,"txt")) for h in range(1,97,1)]
-
+    fcs = [np.loadtxt(os.path.join(FORECASTS,"{}_{}.{}".format("gbrt",h,"txt"))) for h in range(1,97,1)]
     for i in tqdm(np.arange(0,days*horizon)):
         E_opt.append(SoC)
         #IF FORECASTS DO
@@ -294,7 +313,9 @@ def run(days,horizon,SoC,NL,eq,num_samples,quantileLevels,inpEndo,inpExo,tar,lam
         fc = np.vstack([fcs[h][i,:] for h in range(horizon)]) # Read fc instead of producing it
         # Prepare copula samples:
         #samples = copula(NL[NL.index.month==3],horizon,num_samples,0)
-        samples = copula2(gausscopula,num_samples)
+        #samples = copula2(gausscopula,num_samples)
+        samples = copula.rCopula(num_samples, cop_model) # Sample from the copula
+        samples = np.array(samples)
         # Generate scenarios from the above two:
         scenarios = np.zeros((num_samples,horizon))
         for h in range(horizon):
@@ -364,17 +385,21 @@ def qrTraining(horizon,inpEndo,inpExo,tar):
     train_X = train[feature_cols].values
     test_X  = test[feature_cols].values
 
-    scaler = preprocessing.StandardScaler().fit(train_X)
-    train_X = scaler.transform(train_X)
+    #scaler = preprocessing.StandardScaler().fit(train_X)
+    #train_X = scaler.transform(train_X)
 
     train_y = train[cols].values
     test_y = test[cols].values
+
+    # Perhaps add some jitter:
+    #Xtra_jitter = np.random.normal(1*Xtra,0.01) # Add some random noise to avoid singular matrix
 
     quantreg = sm.QuantReg(train_y, train_X)
     tau = 1
     for q in taus:
         res = quantreg.fit(q=q, max_iter=10000)
-        res.save("{}_{}_{}_{}.{}".format("ForecastModels\qr",horizon,"tau",tau,"pickle"))
+        #res.save("{}_{}_{}_{}.{}".format("ForecastModels\qr",horizon,"tau",tau,"pickle"))
+        res.save(os.path.join(FORECASTMODELS,"{}_{}_{}_{}.{}".format("qr",horizon,"tau",tau,"pickle")))
         tau += 1
 
 ################################################################################
@@ -423,22 +448,22 @@ def qr_forecast(horizon,inpEndo,inpExo,tar,quantileLevels,i):
         train_X = train[feature_cols].values
         test_X  = test[feature_cols].values
 
-        scaler = preprocessing.StandardScaler().fit(train_X)
-        test_X = scaler.transform(test_X)
+        #scaler = preprocessing.StandardScaler().fit(train_X)
+        #test_X = scaler.transform(test_X)
 
         test_y = test[cols].values
 
         tau = 1
         test_pred = []
         for q in quantileLevels:
-            model = sm.load("{}_{}_{}_{}.{}".format("ForecastModels\qr",h,"tau",tau,"pickle"))
+            #model = sm.load("{}_{}_{}_{}.{}".format("ForecastModels\qr",h,"tau",tau,"pickle"))
+            model = sm.load(os.path.join(FORECASTMODELS,"{}_{}_{}_{}.{}".format("qr",horizon,"tau",tau,"pickle")))
             test_pred.append(model.predict(test_X[i,:]))
             tau+=1
         tmp = np.vstack(test_pred).T # List to NumPy array
         preds.append(tmp)
     test_pred = np.vstack(preds)
     test_pred.sort(axis=1)
-    print(test_pred,test_y)
     return(test_pred)
 
 ################################################################################
