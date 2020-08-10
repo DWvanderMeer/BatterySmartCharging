@@ -1,7 +1,15 @@
+'''
+Author: Dennis van der Meer
+E-mail: denniswillemvandermeer[at]gmail.com
+
+This script contains the smart charging algorithm based on model predictive
+control. 
+'''
+
 import cvxpy as cp
 import numpy as np
 
-def mpc_run(NL,SoC):
+def mpc(NL,SoC):
     '''
     - NL is the net load forecast and should be numpy array
     - SoC is the initial battery state of charge, i.e., the initial state

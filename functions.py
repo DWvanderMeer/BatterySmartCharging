@@ -10,7 +10,7 @@ the source of the data.
 import numpy as np
 import pandas as pd
 import os
-from copulas.multivariate import GaussianMultivariate
+#from copulas.multivariate import GaussianMultivariate
 #from copulae import GaussianCopula
 import cvxpy as cp
 import cplex as cx
@@ -22,25 +22,37 @@ import joblib as joblib
 import properscoring as ps
 from tqdm import tqdm
 from scipy import stats
+import glob
+
 
 # For rpy2
-import rpy2.robjects as ro
-from rpy2.robjects import pandas2ri
-from rpy2.robjects.conversion import localconverter
-import rpy2.robjects.packages as rpackages
-copula = rpackages.importr('copula') # Load copula library
+#os.environ['PYTHONHOME'] = r"C:\Users\denva787\Documents\dennis\RISE\Code\env\Lib"
+#os.environ['PYTHONPATH'] = r"C:\Users\denva787\Documents\dennis\RISE\Code\env\Lib\site-packages"
+#os.environ['R_HOME'] = r"C:\Program Files\R\R-3.6.2"
+#os.environ['R_USER'] = r"C:\Users\denva787\Documents\dennis\RISE\Code\env\Lib\site-packages\rpy2"
+
+#import rpy2.robjects as ro
+#from rpy2.robjects import pandas2ri
+#from rpy2.robjects.conversion import localconverter
+#import rpy2.robjects.packages as rpackages
+#copula = rpackages.importr('copula') # Load copula library
+import warnings
+warnings.filterwarnings("ignore", message="Error while trying to convert the column ")
 
 # DIRECTORIES ON SERVER
-#dir0 = r"C:\Users\denva787\Documents\dennis\RISE" # Windows
-#os.chdir(r"C:\Users\denva787\Documents\dennis\RISE") # Windows
+dir0 = r"C:\Users\denva787\Documents\dennis\RISE" # Windows
+os.chdir(r"C:\Users\denva787\Documents\dennis\RISE") # Windows
 #MULTIVARIATE_RESULTS = r"C:\Users\denva787\Documents\dennis\RISE\Results\multivariate" # Windows
-#FORECASTS = "/Users/Dennis/Dropbox/BatteryRise/Forecasts/" # macOS
+MULTIVARIATE_RESULTS = r"C:\Users\denva787\Dropbox\BatteryRise\multivariate" # Windows
+FORECASTS = r"C:\Users\denva787\Documents\dennis\RISE\Forecasts" # Windows
+RESULTS = r"C:\Users\denva787\Documents\dennis\RISE\Results" # Windows
+RESULTS = r"C:\Users\denva787\Dropbox\BatteryRise" # Windows
 # DIRECTORIES ON LOCAL MACHINE
-dir0 = "/Users/Dennis/Desktop/Drive/PhD-Thesis/Projects/RISE/" # macOS
-os.chdir('/Users/Dennis/Desktop/Drive/PhD-Thesis/Projects/RISE/') # macOS
-MULTIVARIATE_RESULTS = "/Users/Dennis/Dropbox/BatteryRise/multivariate/" # macOS
-FORECASTS = "/Users/Dennis/Dropbox/BatteryRise/Forecasts/" # macOS
-FORECASTMODELS = "/Users/Dennis/Desktop/ForecastModels/" # Drive/PhD-Thesis/Projects/RISE/
+#dir0 = "/Users/Dennis/Desktop/Drive/PhD-Thesis/Projects/RISE/" # macOS
+#os.chdir('/Users/Dennis/Desktop/Drive/PhD-Thesis/Projects/RISE/') # macOS
+#MULTIVARIATE_RESULTS = "/Users/Dennis/Dropbox/BatteryRise/multivariate/" # macOS
+#FORECASTS = "/Users/Dennis/Dropbox/BatteryRise/Forecasts/" # macOS
+#FORECASTMODELS = "/Users/Dennis/Desktop/ForecastModels/" # Drive/PhD-Thesis/Projects/RISE/
 ################################################################################
 # Function to create a DataFrame of lagged time observations based
 # on an input vector.
@@ -171,6 +183,7 @@ def copula2(copula, num_samples):
 
 ################################################################################
 # Function that creates and solves the optimization problem
+# 2020-08-10: This function is now superseded by smpc in batterySMPC.py.
 ################################################################################
 
 def smpc_run(NL,SoC,eq,lambdas):
@@ -186,7 +199,6 @@ def smpc_run(NL,SoC,eq,lambdas):
       and from the grid.
     '''
     T = NL.shape[0] # Prediction horizon
-
     # Create a 3D k-by-m-by-n variable.
     u = {} # Control inputs
     x = {} # States
@@ -204,7 +216,7 @@ def smpc_run(NL,SoC,eq,lambdas):
     for i in range(S):
         u[i] = cp.Variable((m,T))
         x[i] = cp.Variable((n,T+1))
-        r[i] = cp.Variable((2, T), boolean=True) # Binary variable
+        #r[i] = cp.Variable((4, T), boolean=True) # Binary variable
     beta = cp.Variable((2,1)) # Equalize (dis-)charging power at first time step
     d = cp.Parameter(shape=(NL.shape), value=NL) # Disturbance
     l = cp.Parameter(shape=(lambdas.shape), value=lambdas) # el prices
@@ -225,10 +237,12 @@ def smpc_run(NL,SoC,eq,lambdas):
             constr += [x[s][:,t+1] == A*x[s][:,t] + B@u[s][:,t], # + C*d[t]
                      d[t,s] == u[s][1,t] - u[s][0,t] + u[s][2,t] - u[s][3,t],
                      u[s][:,t] >= 0.0,
-                     u[s][0,t] <= 5*r[s][0,t],
-                     u[s][1,t] <= 5*r[s][1,t],
-                     r[s][0,t] + r[s][1,t] <= 1,
-                     u[s][3,t] <= 5*r[s][0,t],
+                     u[s][0,t] <= 5,#*r[s][0,t]
+                     u[s][1,t] <= 5,#*r[s][1,t]
+                     #r[s][0,t] + r[s][1,t] <= 1,
+                     u[s][2,t] <= 5,#*r[s][2,t]
+                     u[s][3,t] <= 5,#*r[s][3,t]
+                     #r[s][2,t] + r[s][3,t] <= 1, # added 2020-07-06
                      x[s][:,t+1] >= 1.44, x[s][:,t+1] <= 7.0]
             constr += [x[s][:,0] == x_0]
         if eq == True:
@@ -252,11 +266,20 @@ def smpc_run(NL,SoC,eq,lambdas):
     else:
         # Calculate the average u across all scenarios for the first time step:
         avg = np.around(np.mean([u[k].value[:,0] for k in range(S)], axis=0), decimals=3)
+        # Added the following on 2020-07-06 because Pch and Pdis sometimes both
+        # have values in this case study, probably due to the averaging in the
+        # previous step. Therefore the following: (basically, whichever one is higher "wins")
+        if avg[0] and avg[1] > 0:
+            if avg[0] > avg[1]:
+                avg[1] = 0
+            elif avg[0] <= avg[1]:
+                avg[0] = 0
         return(avg)
 
 ################################################################################
 # Function to run the entire problem so that the two case studies (mean
 # of charging power and equalizing across scenarios) can be run in parallel.
+# 2020-08-10: This function is now superseded by run in run.py.
 ################################################################################
 
 def run(days,horizon,SoC,NL,eq,num_samples,quantileLevels,inpEndo,inpExo,tar,lambdas,perfectFC):
@@ -284,33 +307,37 @@ def run(days,horizon,SoC,NL,eq,num_samples,quantileLevels,inpEndo,inpExo,tar,lam
     '''
     data = [] # Store all results
     E_opt = [] # Store the optimal energy results
-    # New: fit the copula once (copulas 0.3.0 is slower than 0.2.4)
+    times = [] # Store the time vector
     # Create a matrix with time lags in the columns to train the copula.
     timeLags = series_to_supervised(NL.to_numpy().tolist(), horizon, 0, False) # [NL.index.month==4]
-    timeLags = timeLags.set_index(NL.index) # [NL.index.month==4]
+    timeLags = timeLags.set_index(NL.index)
     timeLags = timeLags.iloc[:, ::-1]
     timeLags.dropna(axis=0,inplace=True)
-    # Using copula.py
-    #gausscopula = GaussianMultivariate(random_seed=0)
-    #gausscopula.fit(timeLags)
+
     # Using copula and rpy2
-    # Convert timeLags pd.DF to R DF
-    with localconverter(ro.default_converter + pandas2ri.converter):
-      r_from_pd_df = ro.conversion.py2rpy(timeLags)
-    copula = rpackages.importr('copula') # Load copula library
-    m = copula.pobs(r_from_pd_df) # Pseudo-observations
-    cop_model = copula.empCopula(m) # Fit empirical copula model
+    #r_from_pd_df = pandas2ri.py2ri(timeLags)
+    #copula = rpackages.importr('copula') # Load copula library
+    #m = copula.pobs(r_from_pd_df) # Pseudo-observations
+    #cop_model = copula.empCopula(m) # Fit empirical copula model
+
     # Load the forecasts in order to speed up the computation. Otherwise, uncomment
     # the code inside the for-loop to produce forecasts on the fly.
-    fcs = [np.loadtxt(os.path.join(FORECASTS,"{}_{}.{}".format("gbrt",h,"txt"))) for h in range(1,97,1)]
-    for i in tqdm(np.arange(0,days*horizon)):
+    #fcs = [np.loadtxt(os.path.join(FORECASTS,"{}_{}.{}".format("gbrt",h,"txt"))) for h in range(1,97,1)]
+    # Instead load the scenarios.
+    #scenario_files = glob.glob(os.path.join(MULTIVARIATE_RESULTS,'*.txt'))
+    #scenario_file = os.path.join(MULTIVARIATE_RESULTS,"{}_{}.{}".format("B",1,"txt"))
+    #print(scenario_files.sort())
+    for i in tqdm(np.arange(0,5)): # days*horizon 575
         E_opt.append(SoC)
         #IF FORECASTS DO
         # Prepare forecast:
         #fc = peen_forecast(NL, horizon, quantileLevels, i) # PeEn
         #fc = qr_forecast(horizon,inpEndo,inpExo,tar,quantileLevels,i) # qr
         #fc = gbrt_forecast(horizon,inpEndo,inpExo,tar,quantileLevels,i) # gbrt
-        fc = np.vstack([fcs[h][i,:] for h in range(horizon)]) # Read fc instead of producing it
+        #fc = np.vstack([fcs[h][i,:] for h in range(horizon)]) # Read fc instead of producing it
+        '''
+        Now I'm just using the scenarios that I created in R using Pinson's
+        approach instead of sampling
         # Prepare copula samples:
         #samples = copula(NL[NL.index.month==3],horizon,num_samples,0)
         #samples = copula2(gausscopula,num_samples)
@@ -320,29 +347,133 @@ def run(days,horizon,SoC,NL,eq,num_samples,quantileLevels,inpEndo,inpExo,tar,lam
         scenarios = np.zeros((num_samples,horizon))
         for h in range(horizon):
             scenarios[:,h] = np.interp(samples[:,h], quantileLevels, fc[h,:], np.amin(fc[h,:]), np.amax(fc[h,:]))
-        #scenarios = np.transpose(scenarios)
-        #scenarios[0,:] = perfectFC[i] # At the zero-th prediction step, net load is observed so insert this.
+        scenarios = np.transpose(scenarios)
+        scenarios[0,:] = perfectFC[i] # At the zero-th prediction step, net load is observed so insert this.
+        '''
+        scenario_file = os.path.join(MULTIVARIATE_RESULTS,"{}_{}.{}".format("B",i+1,"txt"))
+        df=pd.read_csv(scenario_file, header=None, sep="\t", index_col=0, parse_dates=True, infer_datetime_format=True)
+        # In df (K x 2+S), the first column is "ValidTime", the second column observations and rest scenarios
+        scenarios = df.iloc[:,1:df.shape[1]].values # Select only the scenarios
+        #scenarios[0,:] = df.iloc[0,0] # This is what I had but I should test this
         #ELSE DO PERFECT FORECAST
         #scenarios = perfectFC[i:i+horizon] # perfect forecast
         ################# To assess the scenarios #################
-        # REMEMBER TO UNCOMMENT LINES 253 AND 254!!!!
-        scenarios = np.insert(scenarios, 0, np.transpose(perfectFC[i:i+horizon]), axis=0)
-        np.savetxt(os.path.join(MULTIVARIATE_RESULTS,"B_{}.txt".format(i)), scenarios, delimiter="\t", fmt='%1.3f')
+        # REMEMBER TO UNCOMMENT LINES 253 AND 254 WHEN RUNNING THE MPC!!!!
+        #scenarios = np.insert(scenarios, 0, np.transpose(perfectFC[i:i+horizon]), axis=0)
+        #np.savetxt(os.path.join(MULTIVARIATE_RESULTS,"B_{}.txt".format(i)), scenarios, delimiter="\t", fmt='%1.3f')
         ################# To assess the scenarios #################
-        '''
         start_time = time.time()
         res = smpc_run(scenarios, SoC, eq, lambdas[i:i+horizon,:])
         end_time = time.time() - start_time
+        '''
+        ## Compensate for erroneous forecasts using the grid (2020-07-06) ##
+        if df.iloc[0,0] < 0 and df.iloc[0,0] != res[0]: # Neg. NL and charging power is incorrect
+            if res[0] > np.abs(df.iloc[0,0]):
+                res[2] = res[0] - np.abs(df.iloc[0,0]) # PfrGrid = Pch - NL
+                res[3] = 0
+            elif res[0] < np.abs(df.iloc[0,0]) and res[0] > 0:
+                res[3] = np.abs(df.iloc[0,0]) - res[0] + res[1]
+                res[2] = 0
+            elif res[0] < np.abs(df.iloc[0,0]) and res[0] == 0:
+                res[3] = np.abs(df.iloc[0,0]) + res[1]
+                res[2] = 0
+        elif df.iloc[0,0] > 0 and df.iloc[0,0] != res[1]:
+            if res[1] - df.iloc[0,0] > 0: # Pdis - NL > 0
+                res[3] = res[1] - df.iloc[0,0] # PtoGrid = Pch - NL
+                res[2] = 0
+            elif res[1] - df.iloc[0,0] < 0: # Pdis - NL < 0
+                res[2] = df.iloc[0,0] - res[1] # PfrGrid = NL - Pdis
+                res[3] = 0
+        elif df.iloc[0,0] > 0 and res[0] > 0:
+            res[2] = res[0] + df.iloc[0,0]
+        elif df.iloc[0,0] == 0:
+            if res[1] > 0:
+                res[3] = res[1]
+                res[0] = 0
+                res[2] = 0
+            elif res[0] > 0:
+                res[2] = res[0]
+                res[1] = 0
+                res[3] = 0
+        ## Compensate for erroneous forecasts using the grid (2020-07-06) ##
+        '''
+        '''
+        Herein, control vector u is the following:
+        u[0,t] = Pch
+        u[1,t] = Pdis
+        u[2,t] = PfrGrid
+        u[3,t] = PtoGrid
+        '''
+        ## Compensate for erroneous forecasts using the grid (2020-07-10) ##
+        PB = res[1] - res[0] + res[2] - res[3] - df.iloc[0,0]
+        # If PB > 0 --> surplus of power, else shortage of power.
+        if PB > 0.0: # Lower power from grid or increase power to grid
+            if res[2] > 0.0:
+                res[2] = res[2] - np.abs(PB)
+            elif res[2] == 0.0:
+                res[3] = res[3] + np.abs(PB) # We discharge too much, send extra to grid
+        elif PB < 0.0: # Lower power to grid or increase power from grid
+            if res[3] > 0.0:
+                res[3] = res[3] - np.abs(PB)
+            elif res[3] == 0.0:
+                res[2] = res[2] + np.abs(PB) # We discharge too little, draw extra power from grid
+        ## Compensate for erroneous forecasts using the grid (2020-07-10) ##
         SoC += 0.25*(0.96*res[0]-res[1]/0.96)/7.2 # Update SoC  with latest result.
         res = np.append(res,lambdas[i,:])
         res = np.append(res,end_time)
         res = np.append(res,SoC)
-        res = np.append(res,NL[NL.index.month == 4][i])
+        #res = np.append(res,NL[NL.index.month == 4][i+horizon]) # Because the forecasts start from the second
+        res = np.append(res,df.iloc[0,0]) # Add the observation
         res = np.reshape(res,(1,9))
         res_df = pd.DataFrame(res, columns=['Pch','Pdis','PfrGrid','PtoGrid','buyPrice','sellPrice','runTime','Energy','netLoad'])
-        res_df.index = NL[NL.index.month == 4].index[[i]]
-        res_df.to_csv(dir0 + "{}_{}.{}".format("\Results\DF", eq, "txt"), index=True, header=False, sep='\t', mode="a")
-        '''
+        res_df.index = NL[NL.index.month == 4].index[[i+horizon]] # Because the forecasts start from the second
+        #res_df.to_csv(dir0 + "{}_{}.{}".format("\Results\DF", eq, "txt"), index=True, header=False, sep='\t', mode="a")
+        #res_df.to_csv(os.path.join(RESULTS,"{}_{}.{}".format("reswith", eq, "txt")), index=True, header=False, sep='\t', mode="a")
+        data.append(res)
+        times.append(df.index[0])
+    tmp_df = pd.DataFrame(np.concatenate(data), columns=['Pch','Pdis','PfrGrid','PtoGrid','buyPrice','sellPrice','runTime','Energy','netLoad'], index=times)
+    tmp_df.to_csv(os.path.join(RESULTS,"{}_{}.{}".format("mpc_without_obs_without_bin_with_compensation_updated", eq, "txt")), header=True, sep='\t')
+
+################################################################################
+# Function for uncontrolled charging
+################################################################################
+
+def uncontrolledCharging(perfectFC,SoC,lambdas):
+    data = [] # Store all results
+    E_opt = [] # Store the optimal energy results
+    times = [] # Store the time vector
+    for i in tqdm(np.arange(0,575)):
+        E_opt.append(SoC)
+        # Just loading the scenarios for the time
+        scenario_file = os.path.join(MULTIVARIATE_RESULTS,"{}_{}.{}".format("B",i+1,"txt"))
+        df=pd.read_csv(scenario_file, header=None, sep="\t", index_col=0, parse_dates=True, infer_datetime_format=True)
+        # The uncontrolled charging algorithm
+        res = np.zeros(4) # For the 4 decision variables
+        NL = perfectFC[i]
+        if NL > 0 and SoC > 0.2:
+            res[1] = NL
+        elif NL > 0 and SoC <= 0.2:
+            res[2] = NL
+        elif NL < 0 and SoC < 0.9:
+            res[0] = np.abs(NL)
+        elif NL < 0 and SoC >= 0.9:
+            res[3] = np.abs(NL)
+        elif NL == 0:
+            res[:] = NL
+
+        SoC += 0.25*(0.96*res[0]-res[1]/0.96)/7.2 # Update SoC  with latest result.
+        res = np.append(res,lambdas[i,:])
+        res = np.append(res,0)
+        res = np.append(res,SoC)
+        #res = np.append(res,NL[NL.index.month == 4][i+horizon]) # Because the forecasts start from the second
+        res = np.append(res,NL) # Add the observation
+        res = np.reshape(res,(1,9))
+        res_df = pd.DataFrame(res, columns=['Pch','Pdis','PfrGrid','PtoGrid','buyPrice','sellPrice','runTime','Energy','netLoad'])
+        #res_df.index = NL[NL.index.month == 4].index[[i+horizon]] # Because the forecasts start from the second
+        data.append(res)
+        times.append(df.index[0])
+    tmp_df = pd.DataFrame(np.concatenate(data), columns=['Pch','Pdis','PfrGrid','PtoGrid','buyPrice','sellPrice','runTime','Energy','netLoad'], index=times)
+    tmp_df.to_csv(os.path.join(RESULTS,"{}.{}".format("uncontrolled","txt")), header=True, sep='\t')
 
 ################################################################################
 # Function to train 1..K qr forecast models
@@ -482,7 +613,7 @@ def gbrtTraining(horizon,inpEndo,inpExo,tar,params):
     - Stored .sav files containing the GBRT parameters, one for each horizon
       and nominal probability. Approximately 1.25 GB of storage required.
     '''
-    taus = np.arange(0.1,0.91,0.1)
+    taus = np.arange(0.05,0.96,0.05)
     # Training months
     tr_m = [2,3,5,6] # Removed months 1, 7 and 8 to speed it up but also because they're less relevant.
     # Test month April
@@ -573,6 +704,7 @@ def gbrt_forecast(horizon,inpEndo,inpExo,tar,quantileLevels,i):
 
         train = train[cols + feature_cols].dropna(how="any")
         test  = test[cols + feature_cols].dropna(how="any")
+        test = test.loc['2019-04-02 00:00:00':'2019-04-23 23:45:00'] # Because of NaNs
 
         train_X = train[feature_cols].values
         test_X  = test[feature_cols].values
