@@ -96,7 +96,7 @@ def run(days,horizon,SoC,NL,eq,num_samples,quantileLevels,inpEndo,inpExo,tar,lam
     # Load the forecasts in order to speed up the computation. Otherwise, uncomment
     # the code inside the for-loop to produce forecasts on the fly.
     #fcs = [np.loadtxt(os.path.join(FORECASTS,"{}_{}.{}".format("gbrt",h,"txt"))) for h in range(1,97,1)]
-    for i in tqdm(np.arange(0,5)): # days*horizon 575
+    for i in tqdm(np.arange(0,5)): # As an example 575
         E_opt.append(SoC)
         '''
         Originally, a forecast is issued at each i-th iteration as well as a set
