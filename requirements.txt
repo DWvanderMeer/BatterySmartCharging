@@ -37,7 +37,7 @@ pandas==0.24.2
 patsy==0.5.1
 pluggy==0.13.1
 properscoring==0.1
-py==1.8.1
+py==1.10.0
 pycparser==2.20
 pyparsing==2.4.6
 pytest==5.4.1
